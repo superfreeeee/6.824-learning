@@ -2,6 +2,9 @@
 master: build
 	go run mrcoordinator.go pg-*.txt
 
+master-race: build
+	go run -race mrcoordinator.go pg-*.txt
+
 worker:
 	go run mrworker.go wc.so
 

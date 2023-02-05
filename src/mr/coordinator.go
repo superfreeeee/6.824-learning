@@ -81,28 +81,23 @@ func (t *ReduceTaskStat) CreateTaskInfo() TaskInfo {
 // task queue in Coordinator
 type TaskStatQueue struct {
 	taskArray []TaskStatInterface
-	mutex     sync.Mutex
-}
-
-func (Q *TaskStatQueue) lock() {
-	Q.mutex.Lock()
-}
-
-func (Q *TaskStatQueue) unlock() {
-	Q.mutex.Unlock()
+	mutex     sync.RWMutex // lock taskArray
 }
 
 func (Q *TaskStatQueue) Size() int {
-	return len(Q.taskArray)
+	Q.mutex.RLock()
+	length := len(Q.taskArray)
+	Q.mutex.RUnlock()
+	return length
 }
 
 func (Q *TaskStatQueue) Pop() TaskStatInterface {
-	Q.lock()
+	Q.mutex.Lock()
 
 	// check array
-	rest := Q.Size()
+	rest := len(Q.taskArray)
 	if rest == 0 {
-		Q.unlock()
+		Q.mutex.Unlock()
 		return nil
 	}
 
@@ -110,27 +105,27 @@ func (Q *TaskStatQueue) Pop() TaskStatInterface {
 	taskStat := Q.taskArray[rest-1]
 	Q.taskArray = Q.taskArray[:rest-1]
 
-	Q.unlock()
+	Q.mutex.Unlock()
 	return taskStat
 }
 
 func (Q *TaskStatQueue) Push(taskStat TaskStatInterface) {
-	Q.lock()
+	Q.mutex.Lock()
 
 	// check taskStat
 	if taskStat == nil {
-		Q.unlock()
+		Q.mutex.Unlock()
 		return
 	}
 
 	// append
 	Q.taskArray = append(Q.taskArray, taskStat)
 
-	Q.unlock()
+	Q.mutex.Unlock()
 }
 
 func (Q *TaskStatQueue) RemoveTask(fileIndex int, partIndex int) {
-	Q.lock()
+	Q.mutex.Lock()
 
 	targetIndex := -1
 	for index, taskStat := range Q.taskArray {
@@ -142,21 +137,27 @@ func (Q *TaskStatQueue) RemoveTask(fileIndex int, partIndex int) {
 
 	// target not found
 	if targetIndex == -1 {
-		Q.unlock()
+		Q.mutex.Unlock()
 		return
 	}
 
 	// append
 	Q.taskArray = append(Q.taskArray[:targetIndex], Q.taskArray[targetIndex+1:]...)
 
-	Q.unlock()
+	Q.mutex.Unlock()
+}
+
+func (Q *TaskStatQueue) Slice() []TaskStatInterface {
+	Q.mutex.RLock()
+	arr := Q.taskArray[:]
+	Q.mutex.RUnlock()
+	return arr
 }
 
 type Coordinator struct {
 	// Your definitions here.
 	files   []string
 	nReduce int
-	isDone  bool
 
 	mapTaskWaiting    TaskStatQueue
 	mapTaskRunning    TaskStatQueue
@@ -200,7 +201,6 @@ func (c *Coordinator) AskTask(args *ExampleArgs, reply *TaskInfo) error {
 	} else {
 		// done
 		reply.State = TaskDone
-		c.isDone = true
 		// fmt.Println("Distribute TaskDone")
 		return nil
 	}
@@ -252,11 +252,10 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	// Your code here.
-	return (c.mapTaskWaiting.Size() == 0 &&
+	return c.mapTaskWaiting.Size() == 0 &&
 		c.mapTaskRunning.Size() == 0 &&
 		c.reduceTaskWaiting.Size() == 0 &&
-		c.reduceTaskRunning.Size() == 0) ||
-		c.isDone
+		c.reduceTaskRunning.Size() == 0
 }
 
 func (c *Coordinator) distributeMap() {
@@ -298,8 +297,8 @@ func (c *Coordinator) distributeReduce() {
 }
 
 func (c *Coordinator) timeoutCheck() {
-	for !c.isDone {
-		for _, taskStat := range c.mapTaskRunning.taskArray {
+	for !c.Done() {
+		for _, taskStat := range c.mapTaskRunning.Slice() {
 			if taskStat.OutOfTime() {
 				c.mapTaskRunning.RemoveTask(taskStat.GetFileIndex(), taskStat.GetPartIndex())
 				taskStat.SetNow()
@@ -307,25 +306,13 @@ func (c *Coordinator) timeoutCheck() {
 			}
 		}
 
-		for _, taskStat := range c.reduceTaskRunning.taskArray {
+		for _, taskStat := range c.reduceTaskRunning.Slice() {
 			if taskStat.OutOfTime() {
 				c.reduceTaskRunning.RemoveTask(taskStat.GetFileIndex(), taskStat.GetPartIndex())
 				taskStat.SetNow()
 				c.reduceTaskWaiting.Push(taskStat)
 			}
 		}
-
-		// for _, taskStat := range c.mapTaskWaiting.taskArray {
-		// 	if taskStat.OutOfTime() {
-		// 		c.isDone = true
-		// 	}
-		// }
-
-		// for _, taskStat := range c.reduceTaskWaiting.taskArray {
-		// 	if taskStat.OutOfTime() {
-		// 		c.isDone = true
-		// 	}
-		// }
 
 		// check every 2s
 		time.Sleep(time.Duration(time.Second * 2))

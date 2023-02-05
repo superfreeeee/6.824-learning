@@ -40,28 +40,35 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
+	// fmt.Printf("New Worker %v\n", os.Getpid())
+
 	// Your worker implementation here.
 	for {
 		taskInfo := CallAskTask()
 		if taskInfo == nil {
 			// request fail => Exit
+			// fmt.Printf("Worker %v exit with no task\n", os.Getpid())
 			return
 		}
 		switch taskInfo.State {
 		case TaskMap:
+			// fmt.Printf("Do TaskMap(%v_%v)\n", taskInfo.FileName, taskInfo.FileIndex)
 			workerMap(mapf, *taskInfo)
 			CallTaskDone(taskInfo)
 
 		case TaskReduce:
+			// fmt.Printf("Do TaskReduce(%v)\n", taskInfo.PartIndex)
 			workerReduce(reducef, *taskInfo)
 			CallTaskDone(taskInfo)
 
 		case TaskWait:
-			// sleep 5s
-			time.Sleep(time.Duration(time.Second * 5))
+			// sleep 100ms
+			// fmt.Printf("Worker %v TaskWait \n", os.Getpid())
+			time.Sleep(time.Duration(time.Millisecond * 100))
 
 		case TaskDone:
 			// Worker Exit
+			// fmt.Printf("Worker %v exit when TaskDone\n", os.Getpid())
 			return
 
 		default:
@@ -76,8 +83,6 @@ func Worker(mapf func(string, string) []KeyValue,
 }
 
 func workerMap(mapf func(string, string) []KeyValue, taskInfo TaskInfo) {
-	// fmt.Printf("Do TaskMap(%v_%v)\n", taskInfo.FileName, taskInfo.FileIndex)
-
 	// map: content => KeyValue
 	intermediate := []KeyValue{}
 	file, err := os.Open(taskInfo.FileName)
@@ -125,8 +130,6 @@ func workerMap(mapf func(string, string) []KeyValue, taskInfo TaskInfo) {
 }
 
 func workerReduce(reducef func(string, []string) string, taskInfo TaskInfo) {
-	// fmt.Printf("Do TaskReduce(%v)\n", taskInfo.PartIndex)
-
 	intermediate := []KeyValue{}
 	for fileIndex := 0; fileIndex < taskInfo.NFiles; fileIndex += 1 {
 		fileName := "mr-" + strconv.Itoa(fileIndex) + "-" + strconv.Itoa(taskInfo.PartIndex)
